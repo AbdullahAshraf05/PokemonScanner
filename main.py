@@ -1,47 +1,54 @@
 import tensorflow as tf
-from tensorflow.keras import layers, models
 import cv2
 import numpy as np
 import requests
-from pokemontcgsdk import Card
-from pokemontcgsdk import RestClient
-from .key import API_KEY
+from PIL import Image
+from io import BytesIO
+from pokemontcgsdk import Card, RestClient
+from key import API_KEY
 
 RestClient.configure(API_KEY)
 
-def process_image(image_url):
+def load_image(image_url):
+    response = requests.get(image_url)
+    img = Image.open(BytesIO(response.content))
+    return img
 
-    url = f'https://api.pokemontcg.io/v2/cards'
-    params = {
-        'q': f'name:{card_name}',
-        "page": 1,
-        "pageSize": 10
+def preprocess_image(img, target_size=(224, 224)):
+    img = img.resize(target_size)
+    img_array = np.array(img)
+    img_array = img_array / 255.0
+    img_array = np.expand_dims(img_array, axis=0)
+    return img_array
+
+model = tf.keras.applications.MobileNetV2(weights='imagenet')
+
+def predict_image(img):
+    preprocessed_image = preprocess_image(img)
+    predictions = model.predict(preprocessed_image)
+    decoded_predictions = tf.keras.applications.mobilenet_v2.decode_predictions(predictions, top=3)[0]
+    return decoded_predictions
+
+def fetch_card_info(card_id):
+    card = Card.find(card_id)
+    return {
+        "name": card.name,
+        "hp": card.hp,
+        "rarity": card.rarity,
+        "image_url": card.images['small']
     }
-    headers = {
-        'X-Api-Key': 
-    }
+card_id = 'basep-1'  # Pokémon card ID (replace with actual ID)
+card_info = fetch_card_info(card_id)
+print(f"Card Name: {card_info['name']}")
+print(f"HP: {card_info['hp']}")
+print(f"Rarity: {card_info['rarity']}")
+print(f"Image URL: {card_info['image_url']}")
 
-    response = requests.get(url, params=params, headers=headers)
+# Load image and make prediction
+image_url = card_info['image_url']
+img = load_image(image_url)
+predictions = predict_image(img)
 
-    if response.status_code == 200:
-        data = response.json()
-        print(f"Found {data['count']} cards matching the query '{card_name}':\n")
-        for card in data['data']:
-            card_name = card.get('name', 'Unknown')
-            hp = card.get('hp', 'N/A')
-            rarity = card.get('rarity', 'N/A')
-            image_url = card['images'].get('small', 'No image available')
-
-            print(f"Card Name: {card_name}")
-            print(f"HP: {hp}")
-            print(f"Rarity: {rarity}")
-            print(f"Image URL: {image_url}")
-            print()
-    else:
-         print(f"Error: {response.status_code}, Unable to retrieve data.")
-
-card_name = "hydreigon"
-get_card(card_name)
-
-data = pd.read_csv('pokemon-tcg-data-master 1999-2023.csv')
-print(data.head())
+# Display top predictions
+for i, (imagenet_id, label, score) in enumerate(predictions):
+    print(f"{i + 1}. {label}: {score * 100:.2f}%")
